@@ -9,6 +9,9 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"debug/elf"
+	"debug/macho"
+	"debug/pe"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -75,6 +78,7 @@ xMNjyLp1b84s2VVXTpSFA7i6KEUhl4NjqhZTslJht5Dfiy2Mmvfk2so=
 var (
 	licenseName   string
 	originLicense string
+	xrayFilePath  string
 )
 
 func main() {
@@ -86,6 +90,7 @@ func main() {
 
 	flag.StringVar(&licenseName, "g", "", "生成一个永久license，需要指定用户名")
 	flag.StringVar(&originLicense, "p", "", "解析官方证书，需要指定证书路径")
+	flag.StringVar(&xrayFilePath, "c", "", "patch xray，需要指定xray程序文件路径")
 
 	flag.Parse()
 
@@ -95,6 +100,10 @@ func main() {
 
 	if licenseName != "" {
 		genNew(licenseName)
+	}
+
+	if xrayFilePath != "" {
+		patch(xrayFilePath)
 	}
 }
 
@@ -318,4 +327,86 @@ func importPrivateKey(key string) *rsa.PrivateKey {
 		panic(err)
 	}
 	return privateKey
+}
+
+
+var (
+	origin386Bytes     = []byte{0x0F, 0x95, 0xC0, 0x83, 0xF0, 0x01, 0x88, 0x44, 0x24, 0x50, 0x83, 0xC4, 0x30, 0xC3}
+	new386Bytes        = []byte{0x0F, 0x94, 0xC0, 0x83, 0xF0, 0x01, 0x88, 0x44, 0x24, 0x50, 0x83, 0xC4, 0x30, 0xC3}
+	originAmd64Bytes   = []byte{0x0F, 0x94, 0x84, 0x24, 0xA8, 0x00, 0x00, 0x00}
+	newAmd64Bytes      = []byte{0x0F, 0x95, 0x84, 0x24, 0xA8, 0x00, 0x00, 0x00}
+	originArmBytes     = []byte{}
+	newArmBytes        = []byte{}
+	originAArch64Bytes = []byte{}
+	newAArch64Bytes    = []byte{}
+)
+
+func patch(filePath string) {
+	var (
+		originBytes []byte
+		newBytes    []byte
+	)
+
+	if elfFile, err := elf.Open(filePath); err == nil {
+		switch elfFile.Machine {
+		case elf.EM_386:
+			fmt.Println("linux 386")
+			originBytes = origin386Bytes
+			newBytes = new386Bytes
+		case elf.EM_X86_64:
+			fmt.Println("linux amd64")
+			originBytes = originAmd64Bytes
+			newBytes = newAmd64Bytes
+		case elf.EM_ARM:
+			fmt.Println("linux arm")
+			originBytes = originArmBytes
+			newBytes = newArmBytes
+		case elf.EM_AARCH64:
+			fmt.Println("linux arm64")
+			originBytes = originAArch64Bytes
+			newBytes = newAArch64Bytes
+		default:
+			fmt.Println("Unsupported linux platform!!")
+		}
+	} else if peFile, err := pe.Open(filePath); err == nil {
+		switch peFile.Machine {
+		case pe.IMAGE_FILE_MACHINE_AMD64:
+			fmt.Println("windows amd64")
+			originBytes = originAmd64Bytes
+			newBytes = newAmd64Bytes
+		case pe.IMAGE_FILE_MACHINE_I386:
+			fmt.Println("windows i386")
+			originBytes = origin386Bytes
+			newBytes = new386Bytes
+		default:
+			fmt.Println("Unsupported windows platform!!")
+
+		}
+	} else if machoFile, err := macho.Open(filePath); err == nil {
+		switch machoFile.Cpu {
+		case macho.CpuAmd64:
+			fmt.Println("darwin amd64")
+			originBytes = originAmd64Bytes
+			newBytes = newAmd64Bytes
+		case macho.Cpu386:
+			fmt.Println("darwin 386")
+			originBytes = origin386Bytes
+			newBytes = new386Bytes
+		default:
+			fmt.Println("Unsupported darwin platform!!")
+		}
+	} else {
+		fmt.Println("Can NOT parse file")
+		return
+	}
+
+	origin, err := ioutil.ReadFile(filePath)
+	loc := bytes.LastIndex(origin, originBytes)
+	fmt.Printf("Signature index: %#x\n", loc)
+
+	newFile := bytes.ReplaceAll(origin, originBytes, newBytes)
+	err = ioutil.WriteFile(filePath, newFile, os.ModePerm)
+	if err == nil {
+		fmt.Println("Patch success:", filePath)
+	}
 }
