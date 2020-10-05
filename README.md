@@ -16,9 +16,15 @@
 
 所以我选择从其他地方入手，很明显公钥是用来验证签名的，如此看来直接修改签名验证函数的返回值就行，golang 中 VerifyPSS 返回一个 err，如果`err==nil`就代表签名没问题，放在汇编里就是 `test 某寄存器` 然后 `setz`或`setnz`，改一下就行
 
-~我目前的能力还无法实现用程序对不同平台不同系统的二进制进行这个修改，还没学习怎么写，请大神们各显神通吧~
+使用 `-c path-to-xray` 自动patch二进制xray
 
-感谢 @Lz1y #3 提供的思路和汇编特征，目前还差 arm平台的
+```bash
+# ./xray-crack.exe -c xray_linux_amd64
+linux amd64
+[.text] offset: 0x1000, addr: 0x401000-0x11787e3
+Signature last index: 0xae2f2e
+Patch success: xray_linux_amd64
+```
 
 ## 破解效果
 

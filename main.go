@@ -329,22 +329,22 @@ func importPrivateKey(key string) *rsa.PrivateKey {
 	return privateKey
 }
 
-
 var (
-	origin386Bytes     = []byte{0x0F, 0x95, 0xC0, 0x83, 0xF0, 0x01, 0x88, 0x44, 0x24, 0x50, 0x83, 0xC4, 0x30, 0xC3}
-	new386Bytes        = []byte{0x0F, 0x94, 0xC0, 0x83, 0xF0, 0x01, 0x88, 0x44, 0x24, 0x50, 0x83, 0xC4, 0x30, 0xC3}
-	originAmd64Bytes   = []byte{0x0F, 0x94, 0x84, 0x24, 0xA8, 0x00, 0x00, 0x00}
-	newAmd64Bytes      = []byte{0x0F, 0x95, 0x84, 0x24, 0xA8, 0x00, 0x00, 0x00}
-	originArmBytes     = []byte{}
-	newArmBytes        = []byte{}
-	originAArch64Bytes = []byte{}
-	newAArch64Bytes    = []byte{}
+	origin386Bytes, _     = hex.DecodeString("0F95C083F0018844245083C430C3")
+	new386Bytes, _        = hex.DecodeString("0F94C083F0018844245083C430C3")
+	originAmd64Bytes, _   = hex.DecodeString("0F948424A8000000") //48837C244800
+	newAmd64Bytes, _      = hex.DecodeString("0F958424A8000000") //48837C244800
+	originArmBytes, _     = hex.DecodeString("000050E30000A0E30100A013010020E254")
+	newArmBytes, _        = hex.DecodeString("000050E30000A0E30100A0130100A0E354")
+	originAArch64Bytes, _ = hex.DecodeString("1F001FEBE0079F9A000040D2E0C3")
+	newAArch64Bytes, _    = hex.DecodeString("1F001FEBE0079F9A200080D2E0C3")
 )
 
 func patch(filePath string) {
 	var (
 		originBytes []byte
 		newBytes    []byte
+		maxIndex    uint64 = 0
 	)
 
 	if elfFile, err := elf.Open(filePath); err == nil {
@@ -367,6 +367,13 @@ func patch(filePath string) {
 			newBytes = newAArch64Bytes
 		default:
 			fmt.Println("Unsupported linux platform!!")
+		}
+		sections := elfFile.Sections
+		for _, i := range sections {
+			if i.Name == ".text" {
+				maxIndex = i.Addr + i.Size
+				fmt.Printf("[.text] offset: %#x, addr: %#x-%#x\n", i.Offset, i.Addr, maxIndex)
+			}
 		}
 	} else if peFile, err := pe.Open(filePath); err == nil {
 		switch peFile.Machine {
@@ -402,11 +409,23 @@ func patch(filePath string) {
 
 	origin, err := ioutil.ReadFile(filePath)
 	loc := bytes.LastIndex(origin, originBytes)
-	fmt.Printf("Signature index: %#x\n", loc)
+	fmt.Printf("Signature last index: %#x\n", loc)
 
-	newFile := bytes.ReplaceAll(origin, originBytes, newBytes)
-	err = ioutil.WriteFile(filePath, newFile, os.ModePerm)
-	if err == nil {
-		fmt.Println("Patch success:", filePath)
+	if loc > 0 {
+		newFile := replace(origin, newBytes, loc)
+		err = ioutil.WriteFile(filePath, newFile, os.ModePerm)
+		if err == nil {
+			fmt.Println("Patch success:", filePath)
+		}
+	} else {
+		fmt.Println("Can't find signature")
 	}
+}
+
+func replace(origin, new []byte, index int) []byte {
+	n := make([]byte, len(origin))
+	copy(n[:index], origin[:index])
+	copy(n[index:index+len(new)], new)
+	copy(n[index+len(new):], origin[index+len(new):])
+	return n
 }
